@@ -1,46 +1,24 @@
-// import twilio
-import { customAlphabet } from "nanoid";
-import { passwordResetTokenModel } from "../../models/password-token-schema";
-import twilio from "twilio";
+import twilio from 'twilio'
+import prisma from '../../lib/prisma'
+import { generatePasswordResetTokenByPhone } from '../mails/token'
 
-const client = twilio(process.env.ACCOUNTSID as string, process.env.AUTHTOKEN as string);
-
-export const generatePasswordResetTokenByPhoneWithTwilio = async (phoneNumber: string ,token: string) => {
+export const generatePasswordResetTokenByPhoneWithTwilio = async (phoneNumber: string) => {
+  const token = await generatePasswordResetTokenByPhone(phoneNumber);
+  // Send SMS with twilio
+  const client = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN
+  );
 
   try {
-    const genId = customAlphabet('0123456789', 6);
-    const token = genId();
-    const expires = new Date(new Date().getTime() + 3600 * 1000); // Token valid for 1 hour
-
-    const existingToken = await passwordResetTokenModel.findOne({ phoneNumber });
-    if (existingToken) {
-      await passwordResetTokenModel.findByIdAndDelete(existingToken._id);
-    }
-
-    const newPasswordResetToken = new passwordResetTokenModel({
-      phoneNumber,
-      token,
-      expires,
+    const message = await client.messages.create({
+      body: `Your password reset token is: ${token.token}`,
+      to: phoneNumber,
+      from: process.env.TWILIO_PHONE_NUMBER
     });
-    await newPasswordResetToken.save();
-
-    const message = `Your password reset token is: ${token}. It is valid for 1 hour.`;
-    const res =  await client.messages.create({
-        body: message,
-        from: process.env.FROMPHONENUMBER as string,
-        to: phoneNumber,
-        });
-
-    return {
-      success: true,
-      message: "Password reset token sent via SMS",
-    };
+    return { success: true, token, message };
   } catch (error) {
-    console.error("Error sending password reset token via Twilio:", error);
-    return {
-      success: false,
-      message: "Failed to send password reset token via SMS",
-      error,
-    };
+    console.error('SMS send error:', error);
+    throw error;
   }
-};
+}

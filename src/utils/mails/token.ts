@@ -4,7 +4,7 @@ import prisma from "../../lib/prisma";
 export const generatePasswordResetToken = async (email: string) => {
   const genId = customAlphabet('0123456789', 6);
   const token = genId();
-  const expires = new Date(new Date().getTime() + 3600 * 1000); // 1 hour
+  const expires = new Date(new Date().getTime() + 3600 * 1000);
 
   // Delete existing token for this email
   await prisma.passwordResetToken.deleteMany({
@@ -25,8 +25,8 @@ export const generatePasswordResetToken = async (email: string) => {
 
 export const getPasswordResetTokenByToken = async (token: string) => {
   try {
-    const passwordResetToken = await prisma.passwordResetToken.findUnique({
-      where: { token }
+    const passwordResetToken = await prisma.passwordResetToken.findFirst({
+      where: { token: token }
     });
     return passwordResetToken;
   } catch (error) {
@@ -47,8 +47,8 @@ export const getPasswordResetTokenByEmail = async (email: string) => {
 
 export const deletePasswordResetToken = async (token: string) => {
   try {
-    await prisma.passwordResetToken.delete({
-      where: { token }
+    await prisma.passwordResetToken.deleteMany({
+      where: { token: token }
     });
     return true;
   } catch (error) {
@@ -70,7 +70,7 @@ export const deletePasswordResetTokenByEmail = async (email: string) => {
 export const generatePasswordResetTokenByPhone = async (phoneNumber: string) => {
   const genId = customAlphabet('0123456789', 6);
   const token = genId();
-  const expires = new Date(new Date().getTime() + 3600 * 1000); // 1 hour
+  const expires = new Date(new Date().getTime() + 3600 * 1000);
 
   // Delete existing token for this phone number
   await prisma.passwordResetToken.deleteMany({
@@ -89,16 +89,14 @@ export const generatePasswordResetTokenByPhone = async (phoneNumber: string) => 
   return newPasswordResetToken;
 }
 
-// Check if token is expired
 export const isTokenExpired = (expires: Date): boolean => {
   return new Date() > expires;
 }
 
-// Verify token and get associated user
 export const verifyPasswordResetToken = async (token: string) => {
   try {
-    const resetToken = await prisma.passwordResetToken.findUnique({
-      where: { token }
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: { token: token }
     });
 
     if (!resetToken) {
@@ -106,14 +104,12 @@ export const verifyPasswordResetToken = async (token: string) => {
     }
 
     if (isTokenExpired(resetToken.expires)) {
-      // Delete expired token
-      await prisma.passwordResetToken.delete({
-        where: { token }
+      await prisma.passwordResetToken.deleteMany({
+        where: { token: token }
       });
       return { valid: false, error: 'Token expired' };
     }
 
-    // Find user by email or phone
     let user = null;
     if (resetToken.email) {
       user = await prisma.user.findUnique({
