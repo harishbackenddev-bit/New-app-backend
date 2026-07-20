@@ -1,9 +1,9 @@
 import axios from "axios"
 import { configDotenv } from "dotenv"
 import { Request, Response, NextFunction } from "express"
-import { httpStatusCode } from "../../lib/constant"
-import { errorResponseHandler } from "../../lib/errors/error-response-handler"
-import prisma from "../../lib/prisma"
+import { httpStatusCode } from "../lib/constant"
+import { errorResponseHandler } from "../lib/errors/error-response-handler"
+import prisma from "../lib/prisma"
 configDotenv()
 
 export const checkValidAdminRole = (req: Request, res: Response, next: NextFunction) => {
