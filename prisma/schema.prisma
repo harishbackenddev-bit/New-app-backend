@@ -192,3 +192,16 @@ model AuditLog {
 
   @@map("audit_logs")
 }
+
+model PasswordResetToken {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String?  @db.VarChar(255)
+  phoneNumber  String?  @db.VarChar(20)
+  token        String   @db.VarChar(255)
+  expires      DateTime @db.Timestamp(6)
+  createdAt    DateTime @default(now()) @db.Timestamp(6)
+
+  @@unique([email, token])
+  @@unique([phoneNumber, token])
+  @@map("password_reset_tokens")
+}
