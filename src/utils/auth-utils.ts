@@ -25,7 +25,8 @@ export const generateAuthToken = (
   if (!secret) {
     throw new Error('JWT_SECRET is not defined')
   }
-  return jwt.sign(payload, secret, { expiresIn })
+  // Explicitly cast expiresIn to any to avoid type issue
+  return jwt.sign(payload, secret, { expiresIn } as any)
 }
 
 export const verifyToken = (token: string): string | jwt.JwtPayload => {

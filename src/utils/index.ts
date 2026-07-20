@@ -27,10 +27,8 @@ interface Payload {
 export const queryBuilder = (payload: Payload, querySearchKeyInBackend: string[] = ['name']) => {
     let { description = '', order = '', orderColumn = '', searchFields } = payload;
     
-    // Use provided search fields or default ones
     const searchKeys = searchFields || querySearchKeyInBackend;
     
-    // Build Prisma where clause
     let where: any = {};
     if (description) {
         where.OR = searchKeys.map(key => ({
@@ -38,7 +36,6 @@ export const queryBuilder = (payload: Payload, querySearchKeyInBackend: string[]
         }));
     }
     
-    // Build Prisma orderBy clause
     let orderBy: any = {};
     if (order && orderColumn) {
         orderBy[orderColumn] = order === 'asc' ? 'asc' : 'desc';
@@ -47,7 +44,6 @@ export const queryBuilder = (payload: Payload, querySearchKeyInBackend: string[]
     return { where, orderBy };
 }
 
-// Helper function for pagination
 export const paginationBuilder = (page?: number, limit?: number) => {
     const pageNumber = Math.max(1, page || 1);
     const pageSize = Math.min(100, Math.max(1, limit || 10));
@@ -60,12 +56,10 @@ export const paginationBuilder = (page?: number, limit?: number) => {
     };
 }
 
-// Helper for soft delete filtering
 export const excludeSoftDeleted = (includeDeleted: boolean = false) => {
     return includeDeleted ? {} : { deletedAt: null };
 }
 
-// Helper for date range filtering
 export const dateRangeFilter = (startDate?: string, endDate?: string, field: string = 'createdAt') => {
     const filter: any = {};
     
@@ -79,19 +73,18 @@ export const dateRangeFilter = (startDate?: string, endDate?: string, field: str
     return filter;
 }
 
-// Helper for building Prisma queries with relationships
+// Fix: Change include type to 'any' to allow nested includes
 export const buildPrismaQuery = (params: {
     search?: string;
     searchFields?: string[];
     filters?: Record<string, any>;
     orderBy?: Record<string, string>;
-    include?: Record<string, boolean>;
+    include?: any;  // Changed from Record<string, boolean> to any
     page?: number;
     limit?: number;
 }) => {
     const { search, searchFields = ['name'], filters = {}, orderBy = {}, include = {}, page, limit } = params;
     
-    // Build where clause
     let where: any = { ...filters };
     
     if (search) {
@@ -100,13 +93,11 @@ export const buildPrismaQuery = (params: {
         }));
     }
     
-    // Build orderBy
     const orderByClause: any = {};
     Object.keys(orderBy).forEach(key => {
         orderByClause[key] = orderBy[key] === 'asc' ? 'asc' : 'desc';
     });
     
-    // Build pagination
     const pagination = paginationBuilder(page, limit);
     
     return {
@@ -117,7 +108,6 @@ export const buildPrismaQuery = (params: {
     };
 }
 
-// Example usage for user query
 export const buildUserQuery = (params: {
     search?: string;
     role?: string;
