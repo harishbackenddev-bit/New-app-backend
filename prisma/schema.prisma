@@ -1,0 +1,194 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")  // Add this back for Prisma 6
+}
+// ============================================
+// YOUR MODELS (paste your full schema here)
+// ============================================
+
+model Tenant {
+  tenant_id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.VarChar(255)
+  subdomain        String   @unique @db.VarChar(100)
+  bank_account_ref String?  @db.VarChar(255)
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+  status           String   @default("active") @db.VarChar(20)
+
+  memberships     Membership[]
+  beneficiaries   Beneficiary[]
+  fundraising_events FundraisingEvent[]
+  contributions   Contribution[]
+  payouts         Payout[]
+  notifications   Notification[]
+  audit_logs      AuditLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  user_id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String   @unique @db.VarChar(255)
+  password_hash    String   @db.VarChar(255)
+  full_name        String?  @db.VarChar(255)
+  phone            String?  @db.VarChar(20)
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+  
+  reset_token      String?  @db.VarChar(255)
+  reset_token_expires DateTime? @db.Timestamp(6)
+  reset_otp        String?  @db.VarChar(10)
+  reset_otp_expires DateTime? @db.Timestamp(6)
+
+  memberships      Membership[]
+  created_events   FundraisingEvent[]  @relation("EventCreator")
+  verified_contributions Contribution[] @relation("ContributionVerifier")
+  payouts          Payout[]            @relation("PayoutRecorder")
+  notifications    Notification[]
+  audit_logs       AuditLog[]
+
+  @@map("users")
+}
+
+model Membership {
+  membership_id   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String   @db.Uuid
+  user_id         String   @db.Uuid
+  role            String   @db.VarChar(20)
+  status          String   @default("active") @db.VarChar(20)
+  joined_at       DateTime @default(now()) @db.Timestamp(6)
+
+  tenant          Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  user            User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  beneficiaries   Beneficiary[]
+  event_members   EventMember[]
+  payouts         Payout[]
+
+  @@unique([tenant_id, user_id])
+  @@map("memberships")
+}
+
+model Beneficiary {
+  beneficiary_id  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id       String   @db.Uuid
+  membership_id   String   @db.Uuid
+  name            String   @db.VarChar(255)
+  relationship    String?  @db.VarChar(100)
+  dob             DateTime? @db.Date
+  contact_info    String?  @db.VarChar(255)
+
+  tenant          Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  membership      Membership @relation(fields: [membership_id], references: [membership_id], onDelete: Cascade)
+
+  payouts         Payout[]
+
+  @@map("beneficiaries")
+}
+
+model FundraisingEvent {
+  event_id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  created_by       String   @db.Uuid
+  purpose          String?  @db.VarChar(500)
+  fixed_amount     Decimal  @db.Decimal(10, 2)
+  deadline         DateTime? @db.Date
+  status           String   @default("active") @db.VarChar(20)
+  supporting_doc_url String? @db.VarChar(500)
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+
+  tenant           Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  creator          User     @relation("EventCreator", fields: [created_by], references: [user_id])
+
+  event_members    EventMember[]
+
+  @@map("fundraising_events")
+}
+
+model EventMember {
+  event_member_id  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  event_id         String   @db.Uuid
+  membership_id    String   @db.Uuid
+  amount_due       Decimal  @db.Decimal(10, 2)
+  status           String   @default("pending") @db.VarChar(20)
+
+  event            FundraisingEvent @relation(fields: [event_id], references: [event_id], onDelete: Cascade)
+  membership       Membership @relation(fields: [membership_id], references: [membership_id], onDelete: Cascade)
+
+  contributions    Contribution[]
+
+  @@map("event_members")
+}
+
+model Contribution {
+  contribution_id  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  event_member_id  String   @db.Uuid
+  amount           Decimal  @db.Decimal(10, 2)
+  payment_method   String?  @db.VarChar(30)
+  payment_reference String? @db.VarChar(255)
+  status           String   @default("pending") @db.VarChar(20)
+  verified_by      String?  @db.Uuid
+  paid_at          DateTime? @db.Timestamp(6)
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+
+  tenant           Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  event_member     EventMember @relation(fields: [event_member_id], references: [event_member_id], onDelete: Cascade)
+  verifier         User?    @relation("ContributionVerifier", fields: [verified_by], references: [user_id])
+
+  @@map("contributions")
+}
+
+model Payout {
+  payout_id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  beneficiary_id   String   @db.Uuid
+  membership_id    String   @db.Uuid
+  amount           Decimal  @db.Decimal(10, 2)
+  payout_date      DateTime? @db.Date
+  status           String   @default("recorded") @db.VarChar(20)
+  notes            String?  @db.Text
+  recorded_by      String?  @db.Uuid
+
+  tenant           Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  beneficiary      Beneficiary @relation(fields: [beneficiary_id], references: [beneficiary_id], onDelete: Cascade)
+  membership       Membership @relation(fields: [membership_id], references: [membership_id], onDelete: Cascade)
+  recorder         User?    @relation("PayoutRecorder", fields: [recorded_by], references: [user_id])
+
+  @@map("payouts")
+}
+
+model Notification {
+  notification_id  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  user_id          String   @db.Uuid
+  type             String?  @db.VarChar(30)
+  channel          String?  @db.VarChar(20)
+  message          String?  @db.Text
+  sent_at          DateTime? @db.Timestamp(6)
+  read_at          DateTime? @db.Timestamp(6)
+
+  tenant           Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  user             User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  log_id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tenant_id        String   @db.Uuid
+  user_id          String   @db.Uuid
+  action           String?  @db.VarChar(255)
+  entity_type      String?  @db.VarChar(50)
+  entity_id        String?  @db.Uuid
+  details          Json?
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+
+  tenant           Tenant   @relation(fields: [tenant_id], references: [tenant_id], onDelete: Cascade)
+  user             User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  @@map("audit_logs")
+}

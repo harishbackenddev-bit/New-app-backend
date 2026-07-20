@@ -1,0 +1,24 @@
+# render.yaml
+services:
+  - type: web
+    name: new-app-backend
+    env: node
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: new-app-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        value: https://your-frontend-url.com
+
+  - type: postgresql
+    name: new-app-db
+    plan: starter
+    databaseName: new_app_db
+    postgresMajorVersion: 15
