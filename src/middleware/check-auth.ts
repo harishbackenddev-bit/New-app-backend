@@ -6,11 +6,11 @@ import prisma from "../lib/prisma";
 configDotenv()
 
 declare global {
-    namespace Express {
-        interface Request {
-            user?: string | JwtPayload
-        }
+  namespace Express {
+    interface Request {
+      user?: string | JwtPayload
     }
+  }
 }
 
 export const checkAuth = async (
