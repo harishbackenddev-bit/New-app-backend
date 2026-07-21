@@ -1,9 +1,9 @@
-import { Request, Response } from "express"
+// services/user/user.ts
+import { Request } from "express"
 import bcrypt from "bcryptjs"
 import jwt, { JwtPayload } from 'jsonwebtoken'
 import { customAlphabet } from "nanoid"
 import prisma from "../../lib/prisma"
-import { errorResponseHandler } from "../../lib/errors/error-response-handler"
 import { httpStatusCode } from "../../lib/constant"
 import { sendPasswordResetEmail } from "../../utils/mails/mail"
 import { generateAuthToken, hashPassword, comparePassword, generateNumericOTP } from "../../utils/auth-utils"
@@ -17,7 +17,6 @@ interface SignupPayload {
     password: string
     fullName?: string
     phoneNumber?: string
-    [key: string]: any
 }
 
 interface LoginPayload {
@@ -39,6 +38,28 @@ interface UpdatePasswordPayload {
     }
 }
 
+interface ForgotPasswordPayload {
+    email: string
+}
+
+interface VerifyOTPPayload {
+    email: string
+    otp: string
+}
+
+interface ResetPasswordWithOTPPayload {
+    email: string
+    otp: string
+    newPassword: string
+    confirmPassword: string
+}
+
+interface VerifyPasswordResetPayload {
+    token: string
+    newPassword: string
+    confirmPassword: string
+}
+
 // ============================================
 // AUTH SERVICES
 // ============================================
@@ -46,10 +67,19 @@ interface UpdatePasswordPayload {
 /**
  * Signup Service
  */
-export const signupService = async (payload: SignupPayload, res: Response) => {
+export const signupService = async (payload: SignupPayload) => {
     try {
         const { email, password, fullName, phoneNumber } = payload
         const normalizedEmail = email.toLowerCase().trim()
+
+        // Validate password length
+        if (!password || password.length < 8) {
+            return {
+                success: false,
+                message: "Password must be at least 8 characters",
+                code: httpStatusCode.BAD_REQUEST
+            }
+        }
 
         // Check if email exists
         const existingUser = await prisma.user.findUnique({
@@ -57,11 +87,11 @@ export const signupService = async (payload: SignupPayload, res: Response) => {
         })
 
         if (existingUser) {
-            return errorResponseHandler(
-                "Email already exists",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Email already exists",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Hash password
@@ -72,8 +102,9 @@ export const signupService = async (payload: SignupPayload, res: Response) => {
             data: {
                 email: normalizedEmail,
                 password_hash: hashedPassword,
-                full_name: fullName,
-                phone: phoneNumber
+                full_name: fullName || null,
+                phone: phoneNumber || null,
+                created_at: new Date()
             }
         })
 
@@ -81,7 +112,7 @@ export const signupService = async (payload: SignupPayload, res: Response) => {
         const token = generateAuthToken({
             id: user.user_id,
             email: user.email,
-            phone: user.phone
+            role: 'user'
         })
 
         // Remove sensitive data
@@ -90,25 +121,30 @@ export const signupService = async (payload: SignupPayload, res: Response) => {
         return {
             success: true,
             message: "User signup successful",
-            token,
-            user: userData
+            data: {
+                user: userData
+            },
+            token
         }
+
     } catch (error: any) {
         console.error("Signup error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to create user",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to create user",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Login Service
  */
-export const loginService = async (payload: LoginPayload, res: Response) => {
+export const loginService = async (payload: LoginPayload) => {
     try {
         const { email, password } = payload
+        console.log("emial",email)
+        console.log("password",password)
         const normalizedEmail = email.toLowerCase().trim()
 
         // Find user
@@ -124,31 +160,37 @@ export const loginService = async (payload: LoginPayload, res: Response) => {
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "Invalid credentials",
+                code: httpStatusCode.UNAUTHORIZED
+            }
         }
 
         // Verify password
         const isValidPassword = await comparePassword(password, user.password_hash)
         if (!isValidPassword) {
-            return errorResponseHandler(
-                "Invalid password",
-                httpStatusCode.UNAUTHORIZED,
-                res
-            )
+            return {
+                success: false,
+                message: "Invalid credentials",
+                code: httpStatusCode.UNAUTHORIZED
+            }
         }
 
-        // Determine role from memberships
-        let role = "user"
-        if (user.memberships.length > 0) {
-            const hasAdminRole = user.memberships.some((m: { role: string }) => m.role === "super-admin")
-            if (hasAdminRole) {
-                role = "admin"
+        // Determine role — super-admin check FIRST (tenant-less, global role)
+        let primaryRole = "member"
+
+        if (user.is_super_admin) {
+            primaryRole = "admin"
+        } else if (user.memberships.length > 0) {
+            const roles = user.memberships.map((m) => m.role)
+
+            if (roles.includes("treasurer")) {
+                primaryRole = "treasurer"
+            } else if (roles.includes("member")) {
+                primaryRole = "member"
             } else {
-                role = "member"
+                primaryRole = roles[0]
             }
         }
 
@@ -156,35 +198,43 @@ export const loginService = async (payload: LoginPayload, res: Response) => {
         const token = generateAuthToken({
             id: user.user_id,
             email: user.email,
-            role
+            role: primaryRole
         })
 
-        // Remove sensitive data
-        const { password_hash, reset_token, reset_token_expires, reset_otp, reset_otp_expires, ...userData } = user
+        // Remove sensitive data (only fields that actually exist on User now)
+        const { password_hash, ...userData } = user
 
         return {
             success: true,
             message: "Login successful",
             data: {
-                ...userData,
-                role
+                user: userData,
+                role: primaryRole,
+                tenants: user.memberships.map(m => ({
+                    id: m.tenant_id,
+                    name: m.tenant.name,
+                    subdomain: m.tenant.subdomain,
+                    role: m.role,
+                    status: m.tenant.status
+                }))
             },
             token
         }
+
     } catch (error: any) {
         console.error("Login error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to login",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to login",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Get User Data Service
  */
-export const userdataServive = async (payload: { userId: string }, res: Response) => {
+export const userdataServive = async (payload: { userId: string }) => {
     try {
         const { userId } = payload
 
@@ -200,11 +250,11 @@ export const userdataServive = async (payload: { userId: string }, res: Response
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Remove sensitive data
@@ -213,26 +263,38 @@ export const userdataServive = async (payload: { userId: string }, res: Response
         return {
             success: true,
             message: "User data fetched successfully",
-            data: userData
+            data: {
+                user: userData,
+                memberships: user.memberships.map(m => ({
+                    id: m.membership_id,
+                    tenantId: m.tenant_id,
+                    tenantName: m.tenant.name,
+                    tenantSubdomain: m.tenant.subdomain,
+                    role: m.role,
+                    status: m.status,
+                    joinedAt: m.joined_at
+                }))
+            }
         }
+
     } catch (error: any) {
         console.error("Fetch user error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to fetch user data",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to fetch user data",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 // ============================================
-// PASSWORD RESET SERVICES - OTP FLOW (NEW)
+// PASSWORD RESET SERVICES - OTP FLOW
 // ============================================
 
 /**
  * Forgot Password with OTP Service
  */
-export const forgotPasswordOTPService = async (payload: { email: string }, res: Response) => {
+export const forgotPasswordOTPService = async (payload: ForgotPasswordPayload) => {
     try {
         const { email } = payload
         const normalizedEmail = email.toLowerCase().trim()
@@ -242,11 +304,11 @@ export const forgotPasswordOTPService = async (payload: { email: string }, res: 
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Generate OTP
@@ -263,27 +325,29 @@ export const forgotPasswordOTPService = async (payload: { email: string }, res: 
             }
         })
 
-        // Send OTP via email
+        // TODO: Send OTP via email
         // await sendPasswordResetOTP(email, otp)
+        console.log(`OTP for ${email}: ${otp}`)
 
         return {
             success: true,
             message: "OTP sent successfully to your email"
         }
+
     } catch (error: any) {
         console.error("Forgot password OTP error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to send OTP",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to send OTP",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Verify OTP Service
  */
-export const verifyOTPService = async (payload: { email: string; otp: string }, res: Response) => {
+export const verifyOTPService = async (payload: VerifyOTPPayload) => {
     try {
         const { email, otp } = payload
         const normalizedEmail = email.toLowerCase().trim()
@@ -293,38 +357,38 @@ export const verifyOTPService = async (payload: { email: string; otp: string }, 
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Check if OTP exists
         if (!user.reset_otp || !user.reset_otp_expires) {
-            return errorResponseHandler(
-                "No OTP found. Please request a new one.",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "No OTP found. Please request a new one.",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Check if OTP is expired
         if (new Date() > user.reset_otp_expires) {
-            return errorResponseHandler(
-                "OTP has expired. Please request a new one.",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "OTP has expired. Please request a new one.",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Verify OTP
         if (user.reset_otp !== otp) {
-            return errorResponseHandler(
-                "Invalid OTP",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Invalid OTP",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Generate reset token for password reset
@@ -345,51 +409,51 @@ export const verifyOTPService = async (payload: { email: string; otp: string }, 
         return {
             success: true,
             message: "OTP verified successfully",
-            reset_token: resetToken
+            data: {
+                reset_token: resetToken
+            }
         }
+
     } catch (error: any) {
         console.error("Verify OTP error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to verify OTP",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to verify OTP",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Reset Password with OTP Service
  */
-export const resetPasswordWithOTPService = async (
-    payload: { email: string; otp: string; newPassword: string; confirmPassword: string },
-    res: Response
-) => {
+export const resetPasswordWithOTPService = async (payload: ResetPasswordWithOTPPayload) => {
     try {
         const { email, otp, newPassword, confirmPassword } = payload
 
         // Validate input
         if (!email || !otp || !newPassword) {
-            return errorResponseHandler(
-                "Email, OTP, and new password are required",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Email, OTP, and new password are required",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword !== confirmPassword) {
-            return errorResponseHandler(
-                "Passwords do not match",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Passwords do not match",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword.length < 8) {
-            return errorResponseHandler(
-                "Password must be at least 8 characters",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Password must be at least 8 characters",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         const normalizedEmail = email.toLowerCase().trim()
@@ -398,36 +462,36 @@ export const resetPasswordWithOTPService = async (
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Check OTP
         if (!user.reset_otp || !user.reset_otp_expires) {
-            return errorResponseHandler(
-                "No OTP found. Please request a new one.",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "No OTP found. Please request a new one.",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (new Date() > user.reset_otp_expires) {
-            return errorResponseHandler(
-                "OTP has expired. Please request a new one.",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "OTP has expired. Please request a new one.",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (user.reset_otp !== otp) {
-            return errorResponseHandler(
-                "Invalid OTP",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Invalid OTP",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Hash new password and update
@@ -445,13 +509,14 @@ export const resetPasswordWithOTPService = async (
             success: true,
             message: "Password reset successful. Please login with your new password."
         }
+
     } catch (error: any) {
         console.error("Reset password error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to reset password",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to reset password",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
@@ -462,7 +527,7 @@ export const resetPasswordWithOTPService = async (
 /**
  * Forgot Password with Token Service (Legacy)
  */
-export const forgotPasswordService = async (payload: { email: string }, res: Response) => {
+export const forgotPasswordService = async (payload: ForgotPasswordPayload) => {
     try {
         const { email } = payload
         console.log("emaildd", email)
@@ -474,11 +539,11 @@ export const forgotPasswordService = async (payload: { email: string }, res: Res
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         const resetToken = jwt.sign(
@@ -506,49 +571,47 @@ export const forgotPasswordService = async (payload: { email: string }, res: Res
             success: true,
             message: "Password reset link sent successfully"
         }
+
     } catch (error: any) {
         console.error("Forgot password error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to send reset link",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to send reset link",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Verify Password Reset with Token Service (Legacy)
  */
-export const verifyPasswordResetService = async (
-    payload: { token: string; newPassword: string; confirmPassword: string },
-    res: Response
-) => {
+export const verifyPasswordResetService = async (payload: VerifyPasswordResetPayload) => {
     try {
         const { token, newPassword, confirmPassword } = payload
 
         // Validate input
         if (!token || !newPassword) {
-            return errorResponseHandler(
-                "Token and new password are required",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Token and new password are required",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword !== confirmPassword) {
-            return errorResponseHandler(
-                "Passwords do not match",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Passwords do not match",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword.length < 8) {
-            return errorResponseHandler(
-                "Password must be at least 8 characters",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Password must be at least 8 characters",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Verify JWT token
@@ -557,17 +620,17 @@ export const verifyPasswordResetService = async (
             decoded = jwt.verify(token, process.env.JWT_SECRET as string) as JwtPayload
         } catch (error) {
             if (error instanceof jwt.TokenExpiredError) {
-                return errorResponseHandler(
-                    "Reset link has expired. Please request a new one.",
-                    httpStatusCode.BAD_REQUEST,
-                    res
-                )
+                return {
+                    success: false,
+                    message: "Reset link has expired. Please request a new one.",
+                    code: httpStatusCode.BAD_REQUEST
+                }
             }
-            return errorResponseHandler(
-                "Invalid reset link. Please request a new one.",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Invalid reset link. Please request a new one.",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         // Find user by ID from token
@@ -576,11 +639,11 @@ export const verifyPasswordResetService = async (
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Hash new password
@@ -600,13 +663,14 @@ export const verifyPasswordResetService = async (
             success: true,
             message: "Password reset successful. Please login with your new password."
         }
+
     } catch (error: any) {
         console.error("Reset password error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to reset password",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to reset password",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
@@ -617,7 +681,7 @@ export const verifyPasswordResetService = async (
 /**
  * Get User Info Service
  */
-export const getUserInfoService = async (userId: string, res: Response) => {
+export const getUserInfoService = async (userId: string) => {
     try {
         const user = await prisma.user.findUnique({
             where: { user_id: userId },
@@ -631,11 +695,11 @@ export const getUserInfoService = async (userId: string, res: Response) => {
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         const { password_hash, reset_token, reset_token_expires, reset_otp, reset_otp_expires, ...userData } = user
@@ -645,20 +709,21 @@ export const getUserInfoService = async (userId: string, res: Response) => {
             message: "User data fetched successfully",
             data: userData
         }
+
     } catch (error: any) {
         console.error("Get user info error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to fetch user data",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to fetch user data",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Update User Service
  */
-export const updateAUserService = async (payload: UpdateUserPayload, res: Response) => {
+export const updateAUserService = async (payload: UpdateUserPayload) => {
     try {
         const { userId, body } = payload
 
@@ -667,21 +732,47 @@ export const updateAUserService = async (payload: UpdateUserPayload, res: Respon
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
+        }
+
+        // Prepare update data
+        const updateData: any = {}
+
+        if (body.fullName || body.full_name) {
+            updateData.full_name = body.fullName || body.full_name
+        }
+
+        if (body.phoneNumber || body.phone) {
+            updateData.phone = body.phoneNumber || body.phone
+        }
+
+        if (body.email) {
+            // Check if email already exists for another user
+            const existingEmail = await prisma.user.findFirst({
+                where: {
+                    email: body.email.toLowerCase().trim(),
+                    user_id: { not: userId }
+                }
+            })
+
+            if (existingEmail) {
+                return {
+                    success: false,
+                    message: "Email already exists",
+                    code: httpStatusCode.BAD_REQUEST
+                }
+            }
+            updateData.email = body.email.toLowerCase().trim()
         }
 
         // Update user
         const updatedUser = await prisma.user.update({
             where: { user_id: userId },
-            data: {
-                full_name: body.fullName || body.full_name,
-                phone: body.phoneNumber || body.phone,
-                ...(body.email && { email: body.email.toLowerCase().trim() })
-            }
+            data: updateData
         })
 
         const { password_hash, reset_token, reset_token_expires, reset_otp, reset_otp_expires, ...userData } = updatedUser
@@ -689,33 +780,36 @@ export const updateAUserService = async (payload: UpdateUserPayload, res: Respon
         return {
             success: true,
             message: "User updated successfully",
-            data: userData
+            data: {
+                user: userData
+            }
         }
+
     } catch (error: any) {
         console.error("Update user error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to update user",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to update user",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Delete User Service
  */
-export const deleteAUserService = async (userId: string, res: Response) => {
+export const deleteAUserService = async (userId: string) => {
     try {
         const user = await prisma.user.findUnique({
             where: { user_id: userId }
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Delete user (cascading will handle related records)
@@ -727,47 +821,48 @@ export const deleteAUserService = async (userId: string, res: Response) => {
             success: true,
             message: "User deleted successfully"
         }
+
     } catch (error: any) {
         console.error("Delete user error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to delete user",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to delete user",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
 /**
  * Update Password Service
  */
-export const updateAPasswordService = async (payload: UpdatePasswordPayload, res: Response) => {
+export const updateAPasswordService = async (payload: UpdatePasswordPayload) => {
     try {
         const { userId, body } = payload
         const { currentPassword, newPassword, confirmPassword } = body
 
         // Validate input
         if (!currentPassword || !newPassword) {
-            return errorResponseHandler(
-                "Current password and new password are required",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Current password and new password are required",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword !== confirmPassword) {
-            return errorResponseHandler(
-                "Passwords do not match",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Passwords do not match",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         if (newPassword.length < 8) {
-            return errorResponseHandler(
-                "Password must be at least 8 characters",
-                httpStatusCode.BAD_REQUEST,
-                res
-            )
+            return {
+                success: false,
+                message: "Password must be at least 8 characters",
+                code: httpStatusCode.BAD_REQUEST
+            }
         }
 
         const user = await prisma.user.findUnique({
@@ -775,21 +870,21 @@ export const updateAPasswordService = async (payload: UpdatePasswordPayload, res
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Verify current password
         const isValidPassword = await comparePassword(currentPassword, user.password_hash)
         if (!isValidPassword) {
-            return errorResponseHandler(
-                "Current password is incorrect",
-                httpStatusCode.UNAUTHORIZED,
-                res
-            )
+            return {
+                success: false,
+                message: "Current password is incorrect",
+                code: httpStatusCode.UNAUTHORIZED
+            }
         }
 
         // Hash new password
@@ -807,13 +902,14 @@ export const updateAPasswordService = async (payload: UpdatePasswordPayload, res
             success: true,
             message: "Password updated successfully"
         }
+
     } catch (error: any) {
         console.error("Update password error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to update password",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to update password",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }
 
@@ -824,7 +920,7 @@ export const updateAPasswordService = async (payload: UpdatePasswordPayload, res
 /**
  * Get Dashboard Stats Service
  */
-export const getDashboardStatsService = async (req: Request, res: Response) => {
+export const getDashboardStatsService = async (req: Request) => {
     try {
         const userId = (req as any).currentUser
 
@@ -846,11 +942,11 @@ export const getDashboardStatsService = async (req: Request, res: Response) => {
         })
 
         if (!user) {
-            return errorResponseHandler(
-                "User not found",
-                httpStatusCode.NOT_FOUND,
-                res
-            )
+            return {
+                success: false,
+                message: "User not found",
+                code: httpStatusCode.NOT_FOUND
+            }
         }
 
         // Calculate stats
@@ -886,12 +982,13 @@ export const getDashboardStatsService = async (req: Request, res: Response) => {
             message: "Dashboard stats fetched successfully",
             data: stats
         }
+
     } catch (error: any) {
         console.error("Dashboard stats error:", error)
-        return errorResponseHandler(
-            error.message || "Failed to fetch dashboard stats",
-            httpStatusCode.INTERNAL_SERVER_ERROR,
-            res
-        )
+        return {
+            success: false,
+            message: error.message || "Failed to fetch dashboard stats",
+            code: httpStatusCode.INTERNAL_SERVER_ERROR
+        }
     }
 }

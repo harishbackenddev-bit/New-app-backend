@@ -14,19 +14,34 @@ import {
     getDashboardStatsService
 } from "../../../services/admin/tenant/tenant"
 
+// ============================================
+// DASHBOARD CONTROLLER
+// ============================================
 
-
-// Dashboard
 export const getDashboardStats = async (req: Request, res: Response) => {
     try {
-        const response = await getDashboardStatsService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const result = await getDashboardStatsService(req)
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.NOT_FOUND).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
-        return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({ success: false, message: message || "An error occurred" });
+        return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({ 
+            success: false, 
+            message: message || "An error occurred" 
+        })
     }
 }
-
 
 // ============================================
 // TENANT CONTROLLERS
@@ -37,8 +52,21 @@ export const getDashboardStats = async (req: Request, res: Response) => {
  */
 export const getAllTenants = async (req: Request, res: Response) => {
     try {
-        const response = await getAllTenantsService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const result = await getAllTenantsService(req)
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data,
+            pagination: result.pagination
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -53,8 +81,20 @@ export const getAllTenants = async (req: Request, res: Response) => {
  */
 export const getTenantById = async (req: Request, res: Response) => {
     try {
-        const response = await getTenantByIdService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const result = await getTenantByIdService(req.params.id)
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.NOT_FOUND).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -69,8 +109,20 @@ export const getTenantById = async (req: Request, res: Response) => {
  */
 export const createTenant = async (req: Request, res: Response) => {
     try {
-        const response = await createTenantService(req, res)
-        return res.status(httpStatusCode.CREATED).json(response)
+        const result = await createTenantService(req)
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.CREATED).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -85,8 +137,22 @@ export const createTenant = async (req: Request, res: Response) => {
  */
 export const updateTenant = async (req: Request, res: Response) => {
     try {
-        const response = await updateTenantService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const { id } = req.params
+        const userId = (req as any).currentUser
+        const result = await updateTenantService({ id, userId, body: req.body })
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -101,8 +167,23 @@ export const updateTenant = async (req: Request, res: Response) => {
  */
 export const updateTenantStatus = async (req: Request, res: Response) => {
     try {
-        const response = await updateTenantStatusService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const { id } = req.params
+        const userId = (req as any).currentUser
+        const { status } = req.body
+        const result = await updateTenantStatusService({ id, userId, status })
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -117,8 +198,22 @@ export const updateTenantStatus = async (req: Request, res: Response) => {
  */
 export const deleteTenant = async (req: Request, res: Response) => {
     try {
-        const response = await deleteTenantService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const { id } = req.params
+        const userId = (req as any).currentUser
+        const result = await deleteTenantService({ id, userId })
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -133,8 +228,21 @@ export const deleteTenant = async (req: Request, res: Response) => {
  */
 export const getTenantStats = async (req: Request, res: Response) => {
     try {
-        const response = await getTenantStatsService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const { id } = req.params
+        const result = await getTenantStatsService(id)
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.NOT_FOUND).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            message: result.message,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({
@@ -149,8 +257,20 @@ export const getTenantStats = async (req: Request, res: Response) => {
  */
 export const checkSubdomainAvailability = async (req: Request, res: Response) => {
     try {
-        const response = await checkSubdomainAvailabilityService(req, res)
-        return res.status(httpStatusCode.OK).json(response)
+        const { subdomain, excludeId } = req.query
+        const result = await checkSubdomainAvailabilityService({ subdomain: subdomain as string, excludeId: excludeId as string })
+        
+        if (!result.success) {
+            return res.status(result.code || httpStatusCode.BAD_REQUEST).json({
+                success: false,
+                message: result.message
+            })
+        }
+
+        return res.status(httpStatusCode.OK).json({
+            success: true,
+            data: result.data
+        })
     } catch (error: any) {
         const { code, message } = errorParser(error)
         return res.status(code || httpStatusCode.INTERNAL_SERVER_ERROR).json({

@@ -26,7 +26,12 @@ const corsOptions = {
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
     "http://localhost:5174",
-    "https://test-app-taupe-ten.vercel.app"
+    "https://test-app-taupe-ten.vercel.app",
+          // All localhost subdomains (any subdomain.localhost)
+      /^http:\/\/[a-zA-Z0-9-]+\.localhost:(3000|3001|5173|5174)$/,
+      
+      // All 127.0.0.1 subdomains
+      /^http:\/\/[a-zA-Z0-9-]+\.127\.0\.0\.1:(3000|3001|5173|5174)$/,
   ],
   methods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
   credentials: true,
